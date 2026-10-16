@@ -62,7 +62,7 @@ public class Bot : MonoBehaviour
     {
         float wanderRadius = 10;
         float wanderDistance = 20;
-        float wanderlitter = 1;
+        float wanderlitter = 10;
 
         wanderTarget += new Vector3(Random.Range(-1.0f, 1.0f) * wanderlitter, 0, 
             Random.Range(-1.0f, 1.0f) * wanderlitter);
@@ -75,11 +75,32 @@ public class Bot : MonoBehaviour
         Seek(targetWorld);
 
     }
+
+    void Hide()
+    {
+        float dist = Mathf.Infinity;
+        Vector3 chosenSpot = Vector3.zero;
+
+        for(int i =0; i < World.Instance.GetHidingSpots().Length; i++)
+        {
+            Vector3 hideDir = World.Instance.GetHidingSpots()[i].transform.position- target.transform.position;
+            Vector3 hidePos = World.Instance.GetHidingSpots()[i].transform.position + hideDir.normalized * 5;
+
+            if(Vector3.Distance(this.transform.position, hidePos) < dist)
+            {
+                chosenSpot = hidePos;
+                dist = Vector3.Distance(this.transform.position, hidePos);
+            }
+        }
+
+        Seek(chosenSpot);
+
+    }
+
     void Update()
     {
         if (target == null)
             return;
-
-        Wander();
+        Hide();
     }
 }
