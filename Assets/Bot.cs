@@ -31,11 +31,20 @@ public class Bot : MonoBehaviour
         agent.SetDestination(this.transform.position - fleeVector);
     }
 
+    void Pursue()
+    {
+        Vector3 targetDir = target.transform.position - this.transform.position;
+
+        float lookAhead = targetDir.magnitude / (agent.speed + target.GetComponent<Drive>().currentSpeed);
+        Seek(target.transform.position + target.transform.forward * lookAhead);
+    }
+
+
     void Update()
     {
         if (target == null)
             return;
 
-        Flee(target.transform.position);
+        Pursue();
     }
 }
