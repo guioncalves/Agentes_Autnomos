@@ -55,11 +55,31 @@ public class Bot : MonoBehaviour
         Flee(target.transform.position + target.transform.forward * lookAhead);
 
     }
+
+
+    Vector3 wanderTarget = Vector3.zero;
+    void Wander()
+    {
+        float wanderRadius = 10;
+        float wanderDistance = 20;
+        float wanderlitter = 1;
+
+        wanderTarget += new Vector3(Random.Range(-1.0f, 1.0f) * wanderlitter, 0, 
+            Random.Range(-1.0f, 1.0f) * wanderlitter);
+        wanderTarget.Normalize();
+        wanderTarget *= wanderRadius;
+
+        Vector3 targetLocal = wanderTarget + new Vector3(0, 0, wanderDistance);
+        Vector3 targetWorld = this.gameObject.transform.InverseTransformVector(targetLocal);
+
+        Seek(targetWorld);
+
+    }
     void Update()
     {
         if (target == null)
             return;
 
-        Evade();
+        Wander();
     }
 }
