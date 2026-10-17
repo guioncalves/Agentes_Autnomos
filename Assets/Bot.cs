@@ -7,10 +7,28 @@ public class Bot : MonoBehaviour
     private NavMeshAgent agent;
     private Drive ds;
 
-    [Header("Alvo a perseguir ou evitar")]
+    [Header("Policia")]
     public GameObject target;
 
+    [Header("Esconderijos")]
+    public float hideMargin = 0.8f;
+    public float navMeshSearchRadius = 3f;
+
+    [Header("Detecao")]
+    [Range(0f, 180f)]
+    public float policeViewAngle = 60f;
+
+    public float eyeHeight = 1f;
+    public float detectionDistance = 30f;
+
+    [Header("Comportamento")]
+    public float cooldownDuration = 5f;
+    public float approachDistance = 2f;
+    public float fleeDistance = 8f;
+
     private Vector3 wanderTarget = Vector3.zero;
+
+    private float hideUntil = 0f;
 
     void Start()
     {
@@ -18,15 +36,22 @@ public class Bot : MonoBehaviour
 
         if (agent == null)
         {
-            Debug.LogError("NavMeshAgent nao encontrado em " + gameObject.name);
+            Debug.LogError(
+                "NavMeshAgent nao encontrado em " + gameObject.name
+            );
+
             enabled = false;
             return;
         }
 
-        if (target != null)
+        if (target == null)
         {
-            ds = target.GetComponent<Drive>();
+            Debug.LogError("Policia nao atribuido no Inspector!");
+            enabled = false;
+            return;
         }
+
+        ds = target.GetComponent<Drive>();
     }
 
     void Seek(Vector3 location)
@@ -39,16 +64,41 @@ public class Bot : MonoBehaviour
 
     void Flee(Vector3 location)
     {
-        Vector3 fleeVector = location - transform.position;
-        Seek(transform.position - fleeVector);
+        Vector3 fleeDirection =
+            transform.position - location;
+
+        fleeDirection.y = 0f;
+
+        if (fleeDirection.sqrMagnitude < 0.001f)
+            fleeDirection = -transform.forward;
+
+        fleeDirection.Normalize();
+
+        Vector3 desiredPosition =
+            transform.position + fleeDirection * fleeDistance;
+
+        NavMeshHit hit;
+
+        if (NavMesh.SamplePosition(
+            desiredPosition,
+            out hit,
+            navMeshSearchRadius,
+            agent.areaMask))
+        {
+            Seek(hit.position);
+        }
     }
 
     float GetTargetSpeed()
     {
+        if (target == null)
+            return 0f;
+
         if (ds != null)
             return Mathf.Abs(ds.currentSpeed);
 
-        NavMeshAgent targetAgent = target.GetComponent<NavMeshAgent>();
+        NavMeshAgent targetAgent =
+            target.GetComponent<NavMeshAgent>();
 
         if (targetAgent != null)
             return targetAgent.velocity.magnitude;
@@ -58,33 +108,46 @@ public class Bot : MonoBehaviour
 
     void Pursue()
     {
-        if (target == null)
+        if (target == null || agent == null)
             return;
 
-        Vector3 targetDir = target.transform.position - transform.position;
+        Vector3 direction =
+            target.transform.position - transform.position;
 
-        float relativeHeading =
-            Vector3.Angle(transform.forward, target.transform.forward);
+        direction.y = 0f;
 
-        float toTarget =
-            Vector3.Angle(transform.forward, targetDir);
+        float distance = direction.magnitude;
 
-        float targetSpeed = GetTargetSpeed();
-
-        if ((toTarget > 90f && relativeHeading < 20f) ||
-            targetSpeed < 0.01f)
+        if (distance <= approachDistance)
         {
-            Seek(target.transform.position);
+            if (agent.isOnNavMesh)
+                agent.ResetPath();
+
             return;
         }
 
-        float lookAhead = targetDir.magnitude /
-            Mathf.Max(0.01f, agent.speed + targetSpeed);
+        float targetSpeed = GetTargetSpeed();
 
-        Seek(
+        float lookAhead =
+            distance / Mathf.Max(0.01f, agent.speed + targetSpeed);
+
+        Vector3 predictedPosition =
             target.transform.position +
-            target.transform.forward * targetSpeed * lookAhead
-        );
+            target.transform.forward * targetSpeed * lookAhead;
+
+        // Nao entrar diretamente na posicao do policia
+        Vector3 approachDirection =
+            transform.position - predictedPosition;
+
+        approachDirection.y = 0f;
+
+        if (approachDirection.sqrMagnitude > 0.001f)
+        {
+            predictedPosition +=
+                approachDirection.normalized * approachDistance;
+        }
+
+        Seek(predictedPosition);
     }
 
     void Evade()
@@ -92,17 +155,20 @@ public class Bot : MonoBehaviour
         if (target == null)
             return;
 
-        Vector3 targetDir = target.transform.position - transform.position;
+        Vector3 direction =
+            target.transform.position - transform.position;
 
         float targetSpeed = GetTargetSpeed();
 
-        float lookAhead = targetDir.magnitude /
+        float lookAhead =
+            direction.magnitude /
             Mathf.Max(0.01f, agent.speed + targetSpeed);
 
-        Flee(
+        Vector3 predictedPosition =
             target.transform.position +
-            target.transform.forward * targetSpeed * lookAhead
-        );
+            target.transform.forward * targetSpeed * lookAhead;
+
+        Flee(predictedPosition);
     }
 
     void Wander()
@@ -117,7 +183,8 @@ public class Bot : MonoBehaviour
             Random.Range(-1f, 1f) * wanderJitter
         );
 
-        wanderTarget = wanderTarget.normalized * wanderRadius;
+        wanderTarget =
+            wanderTarget.normalized * wanderRadius;
 
         Vector3 targetLocal =
             wanderTarget + Vector3.forward * wanderDistance;
@@ -130,169 +197,259 @@ public class Bot : MonoBehaviour
 
     void Hide()
     {
-        if (target == null)
-            return;
-
-        GameObject[] hidingSpots = World.Instance.GetHidingSpots();
-
-        if (hidingSpots == null || hidingSpots.Length == 0)
-            return;
-
-        float dist = Mathf.Infinity;
-        Vector3 chosenSpot = Vector3.zero;
-
-        foreach (GameObject spot in hidingSpots)
-        {
-            if (spot == null)
-                continue;
-
-            Vector3 hideDir =
-                spot.transform.position - target.transform.position;
-
-            if (hideDir.sqrMagnitude < 0.001f)
-                continue;
-
-            Vector3 hidePos =
-                spot.transform.position + hideDir.normalized * 3f;
-
-            float currentDistance =
-                Vector3.Distance(transform.position, hidePos);
-
-            if (currentDistance < dist)
-            {
-                chosenSpot = hidePos;
-                dist = currentDistance;
-            }
-        }
-
-        if (dist < Mathf.Infinity)
-        {
-            Debug.DrawLine(transform.position, chosenSpot, Color.green);
-            Debug.DrawRay(chosenSpot, Vector3.up * 3f, Color.red);
-
-            Seek(chosenSpot);
-        }
+        CleverHide();
     }
 
-
-
-
-    void CleverHide()
+    bool CleverHide()
     {
         if (target == null || agent == null || !agent.isOnNavMesh)
-            return;
+            return false;
 
-        GameObject[] hidingSpots = World.Instance.GetHidingSpots();
+        GameObject[] hidingSpots =
+            GameObject.FindGameObjectsWithTag("hide");
 
-        if (hidingSpots == null || hidingSpots.Length == 0)
-            return;
-
-        float dist = Mathf.Infinity;
-        Vector3 chosenSpot = Vector3.zero;
-        Vector3 chosenDir = Vector3.zero;
-        GameObject chosenGo = null;
+        float bestDistance = Mathf.Infinity;
+        Vector3 bestPosition = Vector3.zero;
+        bool found = false;
 
         foreach (GameObject spot in hidingSpots)
         {
             if (spot == null)
                 continue;
 
-            // Direcao do policia para a arvore
+            Collider col =
+                spot.GetComponentInChildren<Collider>();
+
+            if (col == null)
+                continue;
+
+            Bounds bounds = col.bounds;
+
             Vector3 hideDir =
-                spot.transform.position - target.transform.position;
+                bounds.center - target.transform.position;
 
             hideDir.y = 0f;
 
             if (hideDir.sqrMagnitude < 0.001f)
                 continue;
 
-            // Ponto atras da arvore
-            Vector3 hidePos =
-                spot.transform.position + hideDir.normalized * 2f;
+            hideDir.Normalize();
+
+            float extent =
+                Mathf.Abs(hideDir.x) * bounds.extents.x +
+                Mathf.Abs(hideDir.z) * bounds.extents.z;
+
+            Vector3 desiredPosition =
+                bounds.center +
+                hideDir * (extent + agent.radius + hideMargin);
+
+            desiredPosition.y = transform.position.y;
+
+            NavMeshHit navHit;
+
+            if (!NavMesh.SamplePosition(
+                desiredPosition,
+                out navHit,
+                navMeshSearchRadius,
+                agent.areaMask))
+            {
+                continue;
+            }
+
+            NavMeshPath path = new NavMeshPath();
+
+            if (!agent.CalculatePath(navHit.position, path) ||
+                path.status != NavMeshPathStatus.PathComplete)
+            {
+                continue;
+            }
+
+            // Verificar se o obstaculo bloqueia a visao
+            Vector3 policeEye =
+                target.transform.position + Vector3.up * eyeHeight;
+
+            Vector3 hidingPoint =
+                navHit.position + Vector3.up * eyeHeight;
+
+            Vector3 rayDirection = hidingPoint - policeEye;
+            float rayDistance = rayDirection.magnitude;
+
+            RaycastHit hit;
+
+            bool blocked = false;
+
+            if (rayDistance > 0.01f &&
+                Physics.Raycast(
+                    policeEye,
+                    rayDirection.normalized,
+                    out hit,
+                    rayDistance,
+                    ~0,
+                    QueryTriggerInteraction.Ignore))
+            {
+                blocked =
+                    hit.collider == col ||
+                    hit.transform == spot.transform ||
+                    hit.transform.IsChildOf(spot.transform);
+            }
+
+            if (!blocked)
+                continue;
 
             float currentDistance =
-                Vector3.Distance(transform.position, hidePos);
+                Vector3.Distance(transform.position, navHit.position);
 
-            if (currentDistance < dist)
+            if (currentDistance < bestDistance)
             {
-                chosenSpot = hidePos;
-                chosenDir = hideDir;
-                chosenGo = spot;
-                dist = currentDistance;
+                bestDistance = currentDistance;
+                bestPosition = navHit.position;
+                found = true;
             }
         }
 
-        if (chosenGo == null)
-            return;
-
-        Collider hideCol =
-            chosenGo.GetComponentInChildren<Collider>();
-
-        if (hideCol == null)
+        if (found)
         {
-            Seek(chosenSpot);
-            return;
-        }
-
-        // Raios apontados para a arvore
-        Ray backRay = new Ray(
-            chosenSpot,
-            -chosenDir.normalized
-        );
-
-        RaycastHit info;
-        float distance = 2f;
-
-        if (hideCol.Raycast(backRay, out info, distance))
-        {
-            // Ponto junto ao tronco, do lado oposto ao policia
-            Vector3 destination =
-                info.point + chosenDir.normalized * 0.2f;
-
             Debug.DrawLine(
                 transform.position,
-                destination,
+                bestPosition,
                 Color.green
             );
 
             Debug.DrawRay(
-                destination,
+                bestPosition,
                 Vector3.up * 3f,
                 Color.red
             );
 
-            Seek(destination);
+            Seek(bestPosition);
+            return true;
         }
-        else
-        {
-            Debug.DrawLine(
-                transform.position,
-                chosenSpot,
-                Color.yellow
-            );
 
-            Seek(chosenSpot);
-        }
+        return false;
     }
 
     bool CanSeeTarget()
     {
-        RaycastHit raycastInfo;
-        Vector3 rayToTarget = target.transform.position - this.transform.position;
-        if(Physics.Raycast(this.transform.position, rayToTarget, out raycastInfo))
+        if (target == null)
+            return false;
+
+        Vector3 origin =
+            transform.position + Vector3.up * eyeHeight;
+
+        Vector3 destination =
+            target.transform.position + Vector3.up * eyeHeight;
+
+        Vector3 direction = destination - origin;
+        float distance = direction.magnitude;
+
+        if (distance < 0.01f)
+            return true;
+
+        RaycastHit hit;
+
+        if (Physics.Raycast(
+            origin,
+            direction.normalized,
+            out hit,
+            distance,
+            ~0,
+            QueryTriggerInteraction.Ignore))
         {
-            if (raycastInfo.transform.gameObject.tag == "cop")
-                return true;
+            return hit.transform == target.transform ||
+                   hit.transform.IsChildOf(target.transform);
         }
+
         return false;
     }
 
+    bool CanSeeMe()
+    {
+        if (target == null)
+            return false;
+
+        // Direcao do policia para o ladrao
+        Vector3 direction =
+            transform.position - target.transform.position;
+
+        direction.y = 0f;
+
+        float distance = direction.magnitude;
+
+        if (distance > detectionDistance)
+            return false;
+
+        if (distance < 0.01f)
+            return true;
+
+        Vector3 policeForward = target.transform.forward;
+        policeForward.y = 0f;
+
+        float lookAngle =
+            Vector3.Angle(policeForward, direction);
+
+        // O ladrao esta fora do campo de visao
+        if (lookAngle > policeViewAngle)
+            return false;
+
+        // Verificar se ha obstaculos entre os dois
+        Vector3 origin =
+            target.transform.position + Vector3.up * eyeHeight;
+
+        Vector3 destination =
+            transform.position + Vector3.up * eyeHeight;
+
+        Vector3 rayDirection = destination - origin;
+
+        RaycastHit hit;
+
+        if (Physics.Raycast(
+            origin,
+            rayDirection.normalized,
+            out hit,
+            rayDirection.magnitude,
+            ~0,
+            QueryTriggerInteraction.Ignore))
+        {
+            return hit.transform == transform ||
+                   hit.transform.IsChildOf(transform);
+        }
+
+        return false;
+    }
 
     void Update()
     {
-        if (target == null)
+        if (target == null || agent == null || !agent.isOnNavMesh)
             return;
 
-        CleverHide();
+        // Se o policia estiver a ver o ladrao,
+        // o ladrao procura um esconderijo.
+        if (CanSeeMe())
+        {
+            hideUntil = Time.time + cooldownDuration;
+
+            if (!CleverHide())
+            {
+                Evade();
+            }
+
+            return;
+        }
+
+        // Continuar escondido durante alguns segundos
+        // depois de o policia deixar de o ver.
+        if (Time.time < hideUntil)
+        {
+            if (!CleverHide())
+            {
+                Evade();
+            }
+
+            return;
+        }
+
+        // Quando o policia nao esta a olhar,
+        // o ladrao aproxima-se dele.
+        Pursue();
     }
 }
