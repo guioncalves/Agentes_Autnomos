@@ -1362,11 +1362,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bc913c0e61ebb434b90571935dc53e3b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  viewAngle: 109
-  viewDistance: 26.6
+  viewAngle: 85
+  viewDistance: 12.95
   segments: 120
-  rayCount: 40
+  rayCount: 6
   showGizmos: 1
+  gizmoHeight: 1
 --- !u!1 &1793270639
 GameObject:
   m_ObjectHideFlags: 0

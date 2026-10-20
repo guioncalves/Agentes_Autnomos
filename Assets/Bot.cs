@@ -33,7 +33,7 @@ public class Bot : MonoBehaviour
     private Vector3 wanderDestination;
     private bool wandering;
 
-    // Cada objeto hide pode ser reservado por um ladrao
+    // Cada ladrao reserva um esconderijo diferente.
     private static readonly Dictionary<Bot, GameObject> reservations =
         new Dictionary<Bot, GameObject>();
 
@@ -84,6 +84,132 @@ public class Bot : MonoBehaviour
             agent.SetDestination(position);
     }
 
+    // VERIFICAR SE O POLICIA VE O LADRAO
+    bool PoliceCanSeeMe()
+    {
+        if (!policeVision.IsInView(transform.position))
+            return false;
+
+        Vector3 policeEye =
+            target.transform.position + Vector3.up * 0.5f;
+
+        Vector3 robberEye =
+            transform.position + Vector3.up * 0.5f;
+
+        Vector3 direction = robberEye - policeEye;
+        float distance = direction.magnitude;
+
+        if (distance < 0.01f)
+            return true;
+
+        RaycastHit[] hits = Physics.RaycastAll(
+            policeEye,
+            direction.normalized,
+            distance,
+            ~0,
+            QueryTriggerInteraction.Ignore
+        );
+
+        float nearestDistance = Mathf.Infinity;
+        Collider nearestCollider = null;
+
+        foreach (RaycastHit hit in hits)
+        {
+            if (hit.collider.transform.IsChildOf(target.transform))
+                continue;
+
+            if (hit.distance < nearestDistance)
+            {
+                nearestDistance = hit.distance;
+                nearestCollider = hit.collider;
+            }
+        }
+
+        // O primeiro objeto atingido tem de ser o ladrao.
+        // Caso contrario, existe um obstaculo.
+        return nearestCollider != null &&
+               nearestCollider.transform.IsChildOf(transform);
+    }
+
+    // VERIFICAR SE UM ESCONDERIJO ESTA A FRENTE DO POLICIA
+    bool IsHideInFrontOfPolice(Vector3 position)
+    {
+        Vector3 policeForward = target.transform.forward;
+        policeForward.y = 0f;
+
+        if (policeForward.sqrMagnitude < 0.001f)
+            return false;
+
+        policeForward.Normalize();
+
+        Vector3 direction =
+            position - target.transform.position;
+
+        direction.y = 0f;
+
+        if (direction.sqrMagnitude < 0.001f)
+            return false;
+
+        direction.Normalize();
+
+        // Positivo: a frente do policia.
+        // Negativo: atras do policia.
+        float dot = Vector3.Dot(
+            policeForward,
+            direction
+        );
+
+        return dot > 0f;
+    }
+
+    // VERIFICAR SE O OBSTACULO BLOQUEIA A VISAO
+    bool IsReallyHidden(Vector3 position, GameObject spot)
+    {
+        Vector3 policeEye =
+            target.transform.position + Vector3.up * 0.5f;
+
+        Vector3 robberEye =
+            position + Vector3.up * 0.5f;
+
+        Vector3 direction = robberEye - policeEye;
+        float distance = direction.magnitude;
+
+        if (distance < 0.01f)
+            return false;
+
+        RaycastHit[] hits = Physics.RaycastAll(
+            policeEye,
+            direction.normalized,
+            distance,
+            ~0,
+            QueryTriggerInteraction.Ignore
+        );
+
+        float nearestDistance = Mathf.Infinity;
+        Collider nearestCollider = null;
+
+        foreach (RaycastHit hit in hits)
+        {
+            if (hit.collider.transform.IsChildOf(target.transform))
+                continue;
+
+            // Ignorar o proprio ladrao e outros ladroes.
+            if (hit.collider.GetComponentInParent<Bot>() != null)
+                continue;
+
+            if (hit.distance < nearestDistance)
+            {
+                nearestDistance = hit.distance;
+                nearestCollider = hit.collider;
+            }
+        }
+
+        // O obstaculo escolhido tem de ser o primeiro
+        // a bloquear a linha de visao.
+        return nearestCollider != null &&
+               nearestCollider.transform.IsChildOf(spot.transform);
+    }
+
     // PERSEGUIR O POLICIA
     void Pursue()
     {
@@ -116,7 +242,7 @@ public class Bot : MonoBehaviour
         Seek(predictedPosition);
     }
 
-    // VAGUEAR PELO CENARIO
+    // VAGUEAR PELO NAVMESH
     void Wander()
     {
         if (wandering)
@@ -163,7 +289,9 @@ public class Bot : MonoBehaviour
                 continue;
             }
 
-            Vector3 difference = hit.position - transform.position;
+            Vector3 difference =
+                hit.position - transform.position;
+
             difference.y = 0f;
 
             if (difference.magnitude <
@@ -182,7 +310,7 @@ public class Bot : MonoBehaviour
         agent.ResetPath();
     }
 
-    // VERIFICAR RESERVAS
+    // VERIFICAR SE O ESCONDERIJO ESTA RESERVADO
     bool IsReserved(GameObject spot)
     {
         foreach (KeyValuePair<Bot, GameObject> entry in reservations)
@@ -198,7 +326,7 @@ public class Bot : MonoBehaviour
         return false;
     }
 
-    // PROCURAR ESCONDERIJO
+    // ESCOLHER UM ESCONDERIJO VALIDO
     bool CleverHide()
     {
         GameObject[] spots =
@@ -241,6 +369,13 @@ public class Bot : MonoBehaviour
 
             Bounds bounds = obstacle.bounds;
 
+            // NOVA REGRA:
+            // Nao escolher objetos atras do policia.
+            if (!IsHideInFrontOfPolice(bounds.center))
+                continue;
+
+            // O destino deve ficar do lado oposto
+            // ao policia, atras do obstaculo.
             Vector3 hideDirection =
                 bounds.center - target.transform.position;
 
@@ -285,6 +420,16 @@ public class Bot : MonoBehaviour
                 if (difference.magnitude > 0.6f)
                     continue;
 
+                // O destino tambem tem de ficar
+                // a frente do policia.
+                if (!IsHideInFrontOfPolice(hit.position))
+                    continue;
+
+                // O obstaculo tem de bloquear
+                // realmente a linha de visao.
+                if (!IsReallyHidden(hit.position, spot))
+                    continue;
+
                 NavMeshPath path = new NavMeshPath();
 
                 if (!agent.CalculatePath(hit.position, path) ||
@@ -320,10 +465,9 @@ public class Bot : MonoBehaviour
 
         goingToHide = true;
         waitingAtHide = false;
+        wandering = false;
 
         reservations[this] = bestSpot;
-
-        wandering = false;
 
         Debug.Log(name + " escolheu " + bestSpot.name);
 
@@ -348,15 +492,16 @@ public class Bot : MonoBehaviour
 
         float distance = difference.magnitude;
 
-        // O campo de visao vem diretamente do PoliceVision
-        bool policeLooking =
+        bool insideCone =
             policeVision.IsInView(transform.position);
 
-        // 1. Se esta escondido, esperar ate o
-        // policia deixar de olhar para ele.
+        bool policeCanSee = PoliceCanSeeMe();
+
+        // 1. Se chegou ao esconderijo,
+        // espera ate sair do cone de visao.
         if (waitingAtHide)
         {
-            if (policeLooking)
+            if (insideCone)
             {
                 agent.ResetPath();
                 return;
@@ -365,26 +510,7 @@ public class Bot : MonoBehaviour
             ReleaseHide();
         }
 
-        // 2. Se o policia nao esta a olhar,
-        // perseguir ou vaguear.
-        if (!policeLooking)
-        {
-            ReleaseHide();
-
-            if (distance > wanderDistance)
-            {
-                Wander();
-            }
-            else
-            {
-                wandering = false;
-                Pursue();
-            }
-
-            return;
-        }
-
-        // 3. Continuar ate ao esconderijo.
+        // 2. Continuar ate ao esconderijo escolhido.
         if (goingToHide)
         {
             if (chosenHide == null ||
@@ -410,19 +536,40 @@ public class Bot : MonoBehaviour
                 goingToHide = false;
                 waitingAtHide = true;
 
-                Debug.Log(name + " chegou ao esconderijo.");
+                Debug.Log(
+                    name + " chegou ao esconderijo."
+                );
+
                 return;
             }
         }
 
-        // 4. Dentro do cone: procurar esconderijo,
-        // mesmo estando a mais de 10 unidades.
-        wandering = false;
+        // 3. Se o policia ve o ladrao,
+        // procurar um esconderijo a frente dele.
+        if (policeCanSee)
+        {
+            wandering = false;
 
-        if (CleverHide())
+            if (CleverHide())
+                return;
+
+            // Nenhum esconderijo valido.
+            agent.ResetPath();
             return;
+        }
 
-        // Sem esconderijo disponivel
-        agent.ResetPath();
+        // 4. Se nao esta visivel,
+        // perseguir ou vaguear.
+        ReleaseHide();
+
+        if (distance > wanderDistance)
+        {
+            Wander();
+        }
+        else
+        {
+            wandering = false;
+            Pursue();
+        }
     }
 }
